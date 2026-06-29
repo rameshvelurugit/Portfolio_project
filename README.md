@@ -1,10 +1,42 @@
-# Portfolio Performance API
+# Portfolio Performance Platform
 
-A small Spring Boot service that calculates how well a portfolio performed on a given day.
-
-You send market values and cash flow in a JSON request. The API calculates the return, compares it to a benchmark, and tells you whether the result is acceptable, needs review, or has invalid inputs.
+A multi-module Spring Boot platform that calculates portfolio daily returns behind a production-grade API Gateway with load balancing, structured JSON logging, distributed tracing, and Spring Boot Actuator observability.
 
 **There is no database.** Each request is processed in memory and nothing is stored.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Client([Client]) --> GW[portfolio-gateway :8080]
+    GW --> LB[Spring Cloud LoadBalancer]
+    LB --> S1[portfolio-performance :8081]
+    LB --> S2[portfolio-performance :8082]
+    LB --> S3[portfolio-performance :8083]
+    S1 --> Zipkin[(Zipkin :9411)]
+    S2 --> Zipkin
+    S3 --> Zipkin
+    GW --> Zipkin
+```
+
+### Modules
+
+| Module | Port (default) | Role |
+|--------|----------------|------|
+| `portfolio-gateway` | 8080 | Single entry point — routes, retries, gateway logging |
+| `portfolio-performance` | 8081–8083 | Business API — daily return calculation |
+| `portfolio-common` | — | Shared logging utilities (header sanitization, MDC keys, JSON logback) |
+
+### Tech stack
+
+| Component | Version |
+|-----------|---------|
+| Java | 21 |
+| Spring Boot | 3.5.8 |
+| Spring Cloud | 2025.0.1 (Northfields) |
+| Maven | 3.9+ |
 
 ---
 
@@ -12,39 +44,30 @@ You send market values and cash flow in a JSON request. The API calculates the r
 
 | Tool | Version |
 |------|---------|
-| Java | 17 |
+| Java | 21 |
 | Maven | 3.9 or newer |
-
-**Tech stack (current):**
-
-- Spring Boot **3.3.5**
-- Spring Web (REST API)
-- Spring Validation (request field checks)
-- JUnit 5, Mockito, MockMvc (tests)
-- Lombok (optional helper; not required to understand the code)
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Go to the project folder
-cd Portfolio_project
-
-# 2. Build and run all tests
+# Build and test everything
 mvn clean verify
 
-# 3. Start the server
-mvn spring-boot:run
+# Start one performance instance (direct access)
+mvn -pl portfolio-performance spring-boot:run
+
+# Start the API Gateway (routes to instances on 8081–8083)
+mvn -pl portfolio-gateway spring-boot:run
 ```
 
-The server runs at **http://localhost:8080**.
-
-Try a sample request:
+### Sample request via Gateway
 
 ```bash
 curl -s -X POST http://localhost:8080/api/performance/daily-return \
   -H "Content-Type: application/json" \
+  -H "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" \
   -d '{
     "portfolioId": "PF-1001",
     "valuationDate": "2026-06-14",
@@ -57,80 +80,198 @@ curl -s -X POST http://localhost:8080/api/performance/daily-return \
   }'
 ```
 
+The same `POST /api/performance/daily-return` path works unchanged — backward compatible with the original single-service API.
+
 ---
 
-## How a request flows
+## API Gateway
 
-When someone calls the API, this is what happens:
+All REST traffic enters through `portfolio-gateway` on port **8080**. Routes are defined in `portfolio-gateway/src/main/resources/application.yml` (not hardcoded in Java).
 
-```mermaid
-flowchart TD
-    A[Client sends JSON] --> B[PerformanceController]
-    B --> C{Are required fields present?}
-    C -->|No| D[HTTP 400 Bad Request]
-    C -->|Yes| E[DailyReturnService]
-    E --> F[DailyReturnValidator]
-    F -->|Invalid business rules| G[HTTP 200 with status INVALID_INPUT]
-    F -->|Valid| H[ReturnCalculator]
-    H --> I{Review rules triggered?}
-    I -->|Yes| J[HTTP 200 with status REVIEW_REQUIRED]
-    I -->|No| K[HTTP 200 with status VALID]
+| Route ID | Predicate | Target |
+|----------|-----------|--------|
+| `portfolio-performance-api` | `Path=/api/performance/**` | `lb://portfolio-performance` |
+
+**Filters:** Retry on `502/503/504` for POST requests (2 retries, exponential backoff).
+
+**Error handling:** JSON error responses from the gateway without exposing internal stack traces.
+
+---
+
+## Load balancing
+
+Spring Cloud LoadBalancer distributes requests across static instances when service discovery is unavailable:
+
+```yaml
+spring.cloud.discovery.client.simple.instances.portfolio-performance:
+  - http://localhost:8081
+  - http://localhost:8082
+  - http://localhost:8083
 ```
 
-In plain terms:
+Override via environment variables:
 
-1. The **controller** receives the HTTP request.
-2. Spring checks that required fields are present (e.g. `portfolioId` is not blank).
-3. The **service** runs business validation, then does the math.
-4. The API returns a JSON response with the result and a `status` field.
+| Variable | Default |
+|----------|---------|
+| `PORTFOLIO_INSTANCE_1_HOST` / `PORTFOLIO_INSTANCE_1_PORT` | localhost / 8081 |
+| `PORTFOLIO_INSTANCE_2_HOST` / `PORTFOLIO_INSTANCE_2_PORT` | localhost / 8082 |
+| `PORTFOLIO_INSTANCE_3_HOST` / `PORTFOLIO_INSTANCE_3_PORT` | localhost / 8083 |
+
+**Migration path:** Replace `spring.cloud.discovery.client.simple` with Eureka, Consul, or Kubernetes service discovery — the `lb://portfolio-performance` URI stays the same.
+
+### Local multi-instance setup
+
+```bash
+# Terminal 1–3: start three performance instances
+SERVER_PORT=8081 mvn -pl portfolio-performance spring-boot:run
+SERVER_PORT=8082 mvn -pl portfolio-performance spring-boot:run
+SERVER_PORT=8083 mvn -pl portfolio-performance spring-boot:run
+
+# Terminal 4: start gateway
+mvn -pl portfolio-gateway spring-boot:run
+```
+
+---
+
+## Distributed tracing
+
+Micrometer Tracing with Brave propagates W3C `traceparent` headers across:
+
+- Incoming HTTP requests (gateway and service)
+- Outgoing gateway → downstream calls
+- Async tasks (`@EnableAsync`)
+
+Configure sampling and Zipkin export in `application.yml`:
+
+```yaml
+management.tracing.sampling.probability: 1.0   # lower in prod
+management.zipkin.tracing.endpoint: http://localhost:9411/api/v2/spans
+```
+
+### Trace ID propagation example
+
+```bash
+# Client sends traceparent
+curl -H "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" \
+  http://localhost:8080/api/performance/daily-return ...
+
+# Gateway logs include traceId/spanId in JSON
+# Downstream service continues the same trace
+# Zipkin shows: gateway → portfolio-performance spans
+```
+
+---
+
+## Structured JSON logging
+
+All logs are emitted as **one JSON object per line** via Logback + `logstash-logback-encoder` (`portfolio-common/src/main/resources/logback-spring.xml`).
+
+Each log entry includes:
+
+| Field | Source |
+|-------|--------|
+| `timestamp`, `level`, `message`, `logger`, `thread` | Logback |
+| `applicationName`, `serviceName`, `environment` | `application.yml` |
+| `hostName`, `processId` | System |
+| `traceId`, `spanId` | Micrometer MDC |
+| `httpMethod`, `requestUri`, `clientIp`, `userAgent` | Request logging filter |
+| `responseStatus`, `executionTimeMs`, `responseSize` | Request completion |
+| `exceptionClass`, `exceptionMessage`, `stackTrace` | Errors only |
+
+Sensitive headers (`Authorization`, `Cookie`, `X-Api-Key`, etc.) are redacted as `[REDACTED]`.
+
+### Sample JSON log
+
+```json
+{
+  "timestamp": "2026-06-29T18:01:53.525045Z",
+  "level": "INFO",
+  "applicationName": "portfolio-performance",
+  "serviceName": "portfolio-performance",
+  "environment": "local",
+  "hostName": "my-host",
+  "processId": "12474",
+  "thread": "http-nio-8081-exec-1",
+  "logger": "c.p.common.logging.RequestLoggingFilter",
+  "message": "Request completed method=POST uri=/api/performance/daily-return status=200 durationMs=42 responseSize=202 traceId=4bf92f3577b34da6a3ce929d0e0e4736 spanId=00f067aa0ba902b7",
+  "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "spanId": "00f067aa0ba902b7",
+  "httpMethod": "POST",
+  "requestUri": "/api/performance/daily-return",
+  "responseStatus": "200",
+  "executionTimeMs": "42"
+}
+```
+
+**Request logging:** `RequestLoggingFilter` (servlet) + `RequestLoggingInterceptor` (handler MDC enrichment) on the service; `GatewayRequestLoggingFilter` on the gateway. No duplicate start/complete logs.
+
+---
+
+## Spring Boot Actuator
+
+### Endpoints
+
+| Endpoint | Dev | Prod |
+|----------|-----|------|
+| `/actuator/health` | ✓ | ✓ |
+| `/actuator/health/liveness` | ✓ | ✓ |
+| `/actuator/health/readiness` | ✓ | ✓ |
+| `/actuator/info` | ✓ | ✓ |
+| `/actuator/metrics` | ✓ | ✓ |
+| `/actuator/prometheus` | ✓ | ✓ |
+| `/actuator/loggers` | ✓ | ✗ |
+| `/actuator/env` | ✓ | ✗ |
+| `/actuator/configprops` | dev only | ✗ |
+| `/actuator/beans` | dev only | ✗ |
+
+Activate profiles: `SPRING_PROFILES_ACTIVE=dev|test|prod`
+
+```bash
+curl http://localhost:8081/actuator/health
+curl http://localhost:8081/actuator/health/liveness
+curl http://localhost:8081/actuator/prometheus
+curl http://localhost:8080/actuator/info   # gateway
+```
+
+---
+
+## Docker
+
+```bash
+mvn clean package -DskipTests
+docker compose up --build
+```
+
+Services: Zipkin (9411), three performance instances (8081–8083), gateway (8080).
+
+---
+
+## Monitoring integration
+
+| System | Integration |
+|--------|-------------|
+| **Prometheus** | Scrape `/actuator/prometheus` on each instance |
+| **Grafana** | Prometheus datasource + dashboards |
+| **Zipkin / Jaeger** | `management.zipkin.tracing.endpoint` |
+| **ELK / OpenSearch / Splunk / Loki / Datadog** | Ship JSON stdout logs |
 
 ---
 
 ## Project structure
 
-All source code lives under `src/main/java/com/portfolio/performance/`.
-
 ```
-com.portfolio.performance/
-├── PortfolioPerformanceApplication.java   ← starts the app
-├── api/                                   ← HTTP layer
-│   ├── controller/PerformanceController.java
-│   ├── dto/DailyReturnRequest.java
-│   ├── dto/DailyReturnResponse.java
-│   └── exception/GlobalExceptionHandler.java
-├── application/                           ← business logic
-│   ├── service/DailyReturnService.java    ← main orchestrator
-│   ├── validation/DailyReturnValidator.java
-│   ├── validation/ValidationResult.java
-│   └── calculation/ReturnCalculator.java
-├── domain/
-│   ├── CalculationStatus.java             ← VALID, REVIEW_REQUIRED, INVALID_INPUT
-│   └── CalculationConstants.java          ← thresholds and rounding rules
-└── config/ClockConfig.java                ← makes timestamps testable
+portfolio-parent/
+├── pom.xml                         # Parent BOM (Boot 3.5.8, Cloud 2025.0.1)
+├── portfolio-common/               # Shared observability utilities
+├── portfolio-performance/          # Business REST API
+│   └── src/main/java/com/portfolio/
+│       ├── performance/              # Controller, service, validation, calculation
+│       └── common/logging/           # Servlet request logging
+├── portfolio-gateway/              # Spring Cloud Gateway
+├── docker-compose.yml
+├── Dockerfile.performance
+└── Dockerfile.gateway
 ```
-
-### Where to start reading (for new developers)
-
-| If you want to understand… | Read this file first |
-|----------------------------|----------------------|
-| The API endpoint | `api/controller/PerformanceController.java` |
-| The full business flow | `application/service/DailyReturnService.java` |
-| The return formula | `application/calculation/ReturnCalculator.java` |
-| Input validation rules | `application/validation/DailyReturnValidator.java` |
-| Request/response shape | `api/dto/DailyReturnRequest.java` and `DailyReturnResponse.java` |
-| Error responses (HTTP 400) | `api/exception/GlobalExceptionHandler.java` |
-
-### Tests
-
-Tests mirror the main code under `src/test/java/com/portfolio/performance/`:
-
-| Test class | What it checks |
-|------------|----------------|
-| `ReturnCalculatorTest` | Math and rounding |
-| `DailyReturnValidatorTest` | Business validation rules |
-| `DailyReturnServiceTest` | Full flow for all three statuses |
-| `PerformanceControllerTest` | HTTP layer with MockMvc |
-| `PerformanceControllerIntegrationTest` | End-to-end with real Spring context |
 
 ---
 
@@ -191,23 +332,6 @@ excessReturnPct    = portfolioReturnPct - benchmarkReturnPct
 
 **Special case:** when both `beginMarketValue` and `endMarketValue` are zero, `portfolioReturnPct` is `0.00`.
 
-**Numbers:** all calculations use `BigDecimal` (not `double`) with 2 decimal places and `HALF_UP` rounding. Thresholds live in `CalculationConstants.java`.
-
-**Worked example** (from the assignment):
-
-| Input | Value |
-|-------|-------|
-| beginMarketValue | 1,000,000 |
-| endMarketValue | 1,035,000 |
-| netCashFlow | 10,000 |
-| benchmarkReturnPct | 1.8 |
-
-| Output | Value |
-|--------|-------|
-| portfolioReturnPct | 2.50 |
-| excessReturnPct | 0.70 |
-| status | VALID |
-
 ### Status values
 
 | Status | When it is returned |
@@ -216,158 +340,51 @@ excessReturnPct    = portfolioReturnPct - benchmarkReturnPct
 | `REVIEW_REQUIRED` | Calculation succeeded, but something looks unusual |
 | `INVALID_INPUT` | Business validation failed |
 
-### What causes `INVALID_INPUT`
+### Review thresholds
 
-- `beginMarketValue` is negative
-- `endMarketValue` is negative
-- `currency` is null or blank
-- `beginMarketValue` is 0 and `endMarketValue` is not 0
-
-When status is `INVALID_INPUT`, `portfolioReturnPct` and `excessReturnPct` are `null`, and `reasons` lists what went wrong.
-
-### What causes `REVIEW_REQUIRED`
-
-Either of these (both can apply at once):
-
-1. Portfolio return differs from benchmark by **more than 5 percentage points**  
-   `|portfolioReturnPct - benchmarkReturnPct| > 5`
-
-2. Net cash flow is **more than 20%** of begin market value  
-   `|netCashFlow| > beginMarketValue × 0.20`
-
-**Edge case:** when `beginMarketValue` is 0, the cash-flow limit is also 0. Any non-zero cash flow triggers review.
-
----
-
-## Example responses
-
-### VALID
-
-```json
-{
-  "portfolioId": "PF-1001",
-  "valuationDate": "2026-06-14",
-  "portfolioReturnPct": 2.50,
-  "benchmarkReturnPct": 1.8,
-  "excessReturnPct": 0.70,
-  "status": "VALID",
-  "reasons": [],
-  "processedAt": "2026-06-14T10:30:00Z"
-}
-```
-
-### REVIEW_REQUIRED
-
-Request with a large return vs benchmark (~8% portfolio vs 1.8% benchmark):
-
-```bash
-curl -s -X POST http://localhost:8080/api/performance/daily-return \
-  -H "Content-Type: application/json" \
-  -d '{
-    "portfolioId": "PF-1001",
-    "valuationDate": "2026-06-14",
-    "beginMarketValue": 1000000,
-    "endMarketValue": 1080000,
-    "netCashFlow": 0,
-    "benchmarkReturnPct": 1.8,
-    "currency": "USD",
-    "requestedBy": "advisor01"
-  }'
-```
-
-```json
-{
-  "status": "REVIEW_REQUIRED",
-  "reasons": [
-    "portfolio return deviates from benchmark by more than 5%"
-  ]
-}
-```
-
-### INVALID_INPUT
-
-```bash
-curl -s -X POST http://localhost:8080/api/performance/daily-return \
-  -H "Content-Type: application/json" \
-  -d '{
-    "portfolioId": "PF-1001",
-    "valuationDate": "2026-06-14",
-    "beginMarketValue": -100,
-    "endMarketValue": 1035000,
-    "netCashFlow": 10000,
-    "benchmarkReturnPct": 1.8,
-    "currency": "USD",
-    "requestedBy": "advisor01"
-  }'
-```
-
-```json
-{
-  "portfolioReturnPct": null,
-  "excessReturnPct": null,
-  "status": "INVALID_INPUT",
-  "reasons": [
-    "beginMarketValue must be non-negative"
-  ]
-}
-```
-
-### HTTP 400 (bad request format)
-
-Returned when a required field is missing or JSON is malformed:
-
-```json
-{
-  "timestamp": "2026-06-14T10:30:00Z",
-  "status": 400,
-  "error": "Validation failed",
-  "message": "One or more request fields are invalid",
-  "fieldErrors": [
-    {
-      "field": "portfolioId",
-      "message": "must not be blank"
-    }
-  ]
-}
-```
+1. Portfolio return differs from benchmark by **more than 5 percentage points**
+2. Net cash flow is **more than 20%** of begin market value
 
 ---
 
 ## Running tests
 
 ```bash
-# Run all tests
-mvn test
-
-# Build + test (recommended before committing)
 mvn clean verify
 ```
 
-Current test count: **26 tests** across calculator, validator, service, and controller layers.
-
----
-
-## Design decisions (good to know)
-
-| Topic | Current choice |
-|-------|----------------|
-| Database | None — stateless API |
-| Persistence | No data saved between requests |
-| Dependency injection | Constructor injection everywhere |
-| Timestamps | `Clock` bean (easy to fix time in tests) |
-| Money / percentages | `BigDecimal` only |
-| Business vs format errors | Business errors → HTTP 200 with `status` in body; format errors → HTTP 400 |
+| Module | Tests |
+|--------|-------|
+| `portfolio-common` | Header sanitization |
+| `portfolio-performance` | 33 tests — calculator, validator, service, controller, actuator, tracing |
+| `portfolio-gateway` | Route config, actuator, logging utilities |
 
 ---
 
 ## Configuration
 
-Server settings are in `src/main/resources/application.yml`:
+All settings are externalized in `application.yml` with profile overrides (`application-dev.yml`, `application-test.yml`, `application-prod.yml`).
 
-| Setting | Value |
-|---------|-------|
-| Port | 8080 |
-| Application name | portfolio-performance |
+| Setting | Env variable | Default |
+|---------|--------------|---------|
+| Gateway port | `GATEWAY_PORT` | 8080 |
+| Service port | `SERVER_PORT` | 8081 |
+| Environment label | `ENVIRONMENT` | local |
+| Tracing sample rate | `TRACING_SAMPLING_PROBABILITY` | 1.0 (dev), 0.1 (prod) |
+| Zipkin endpoint | `ZIPKIN_ENDPOINT` | http://localhost:9411/api/v2/spans |
+| Service name (LB) | `PORTFOLIO_SERVICE_NAME` | portfolio-performance |
+
+---
+
+## Manual verification checklist
+
+1. `mvn clean verify` — all tests pass
+2. Start gateway + one performance instance — `curl` daily-return via `:8080` returns 200
+3. Check JSON logs in console — single-line JSON, traceId present
+4. `curl /actuator/health` — returns `UP`
+5. `curl /actuator/prometheus` — returns Prometheus text format
+6. Send `traceparent` header — request succeeds, same trace in logs
+7. Start 3 instances — repeated gateway requests hit different backends (check instance logs)
 
 ---
 
@@ -376,19 +393,4 @@ Server settings are in `src/main/resources/application.yml`:
 | File | Purpose |
 |------|---------|
 | [`prompt-log.md`](prompt-log.md) | Log of AI prompts used during development |
-| [`.cursor/skills/calculation-reviewer/SKILL.md`](.cursor/skills/calculation-reviewer/SKILL.md) | Checklist for reviewing calculation logic and tests |
-
----
-
-## Keeping this document up to date
-
-When you change the codebase, update this README if you:
-
-- Add or remove an endpoint
-- Change request/response fields
-- Change business rules or thresholds (update `CalculationConstants.java` and this file)
-- Add a database or new dependency
-- Add or rename packages or main classes
-
-The file tree and class names in this document should match `src/main/java` at all times.
-# Portfolio_project
+| [`.cursor/skills/calculation-reviewer/SKILL.md`](.cursor/skills/calculation-reviewer/SKILL.md) | Checklist for reviewing calculation logic |

@@ -1,0 +1,70 @@
+services:
+  zipkin:
+    image: openzipkin/zipkin:3.4
+    ports:
+      - "9411:9411"
+
+  portfolio-performance-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.performance
+    environment:
+      SERVER_PORT: 8081
+      SPRING_PROFILES_ACTIVE: dev
+      ENVIRONMENT: docker
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    ports:
+      - "8081:8081"
+    depends_on:
+      - zipkin
+
+  portfolio-performance-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.performance
+    environment:
+      SERVER_PORT: 8082
+      SPRING_PROFILES_ACTIVE: dev
+      ENVIRONMENT: docker
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    ports:
+      - "8082:8082"
+    depends_on:
+      - zipkin
+
+  portfolio-performance-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.performance
+    environment:
+      SERVER_PORT: 8083
+      SPRING_PROFILES_ACTIVE: dev
+      ENVIRONMENT: docker
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    ports:
+      - "8083:8083"
+    depends_on:
+      - zipkin
+
+  portfolio-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    environment:
+      GATEWAY_PORT: 8080
+      SPRING_PROFILES_ACTIVE: dev
+      ENVIRONMENT: docker
+      PORTFOLIO_INSTANCE_1_HOST: portfolio-performance-1
+      PORTFOLIO_INSTANCE_1_PORT: 8081
+      PORTFOLIO_INSTANCE_2_HOST: portfolio-performance-2
+      PORTFOLIO_INSTANCE_2_PORT: 8082
+      PORTFOLIO_INSTANCE_3_HOST: portfolio-performance-3
+      PORTFOLIO_INSTANCE_3_PORT: 8083
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+    ports:
+      - "8080:8080"
+    depends_on:
+      - portfolio-performance-1
+      - portfolio-performance-2
+      - portfolio-performance-3
+      - zipkin

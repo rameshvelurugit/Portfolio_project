@@ -1,0 +1,72 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: portfolio-performance
+
+portfolio:
+  observability:
+    service-name: ${spring.application.name}
+    environment: ${ENVIRONMENT:local}
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,info,metrics,prometheus,loggers,env
+    access:
+      default: read_only
+  endpoint:
+    health:
+      show-details: when_authorized
+      access: read_only
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+    env:
+      show-values: when_authorized
+      access: read_only
+    loggers:
+      access: read_only
+    prometheus:
+      access: read_only
+    info:
+      access: read_only
+    metrics:
+      access: read_only
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  info:
+    env:
+      enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+    propagation:
+      type: w3c
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
+
+info:
+  app:
+    name: ${spring.application.name}
+    description: Portfolio daily return calculation REST API
+
+logging:
+  level:
+    root: INFO
+    com.portfolio: INFO

@@ -1,0 +1,19 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,loggers,env,configprops,beans
+  endpoint:
+    health:
+      show-details: always
+    env:
+      show-values: always
+
+logging:
+  level:
+    com.portfolio: DEBUG

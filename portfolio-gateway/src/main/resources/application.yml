@@ -1,0 +1,96 @@
+server:
+  port: ${GATEWAY_PORT:8080}
+
+spring:
+  application:
+    name: portfolio-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: portfolio-performance-api
+              uri: lb://${PORTFOLIO_SERVICE_NAME:portfolio-performance}
+              predicates:
+                - Path=/api/performance/**
+              filters:
+                - name: Retry
+                  args:
+                    retries: 2
+                    methods: POST
+                    statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
+                    backoff:
+                      firstBackoff: 100ms
+                      maxBackoff: 500ms
+                      factor: 2
+    discovery:
+      client:
+        simple:
+          instances:
+            portfolio-performance:
+              - uri: http://${PORTFOLIO_INSTANCE_1_HOST:localhost}:${PORTFOLIO_INSTANCE_1_PORT:8081}
+              - uri: http://${PORTFOLIO_INSTANCE_2_HOST:localhost}:${PORTFOLIO_INSTANCE_2_PORT:8082}
+              - uri: http://${PORTFOLIO_INSTANCE_3_HOST:localhost}:${PORTFOLIO_INSTANCE_3_PORT:8083}
+    loadbalancer:
+      ribbon:
+        enabled: false
+
+portfolio:
+  observability:
+    service-name: ${spring.application.name}
+    environment: ${ENVIRONMENT:local}
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,info,metrics,prometheus,loggers,env
+    access:
+      default: read_only
+  endpoint:
+    health:
+      show-details: when_authorized
+      access: read_only
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+    env:
+      show-values: when_authorized
+      access: read_only
+    prometheus:
+      access: read_only
+    info:
+      access: read_only
+    metrics:
+      access: read_only
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_ENDPOINT:http://localhost:9411/api/v2/spans}
+
+info:
+  app:
+    name: ${spring.application.name}
+    description: Portfolio API Gateway
+
+logging:
+  level:
+    root: INFO
+    com.portfolio: INFO
+    org.springframework.cloud.gateway: INFO
