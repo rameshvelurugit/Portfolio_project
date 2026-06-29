@@ -1,0 +1,38 @@
+package com.portfolio.performance.api.controller;
+
+import com.portfolio.performance.api.dto.DailyReturnRequest;
+import com.portfolio.performance.api.dto.DailyReturnResponse;
+import com.portfolio.performance.application.service.DailyReturnService;
+import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * REST endpoints for portfolio performance calculations.
+ */
+@RestController
+@RequestMapping("/api/performance")
+public class PerformanceController {
+
+  private final DailyReturnService dailyReturnService;
+
+  public PerformanceController(DailyReturnService dailyReturnService) {
+    this.dailyReturnService = dailyReturnService;
+  }
+
+  /**
+   * Calculates the daily portfolio return for a single valuation date.
+   *
+   * @param request portfolio values, cash flow, and benchmark data
+   * @return calculated returns with a business status and any review reasons
+   */
+  @PostMapping("/daily-return")
+  public ResponseEntity<DailyReturnResponse> calculateDailyReturn(
+      @Valid @RequestBody DailyReturnRequest request) {
+    DailyReturnResponse response = dailyReturnService.calculateDailyReturn(request);
+    return ResponseEntity.ok(response);
+  }
+}
