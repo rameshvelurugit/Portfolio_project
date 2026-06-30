@@ -11,6 +11,15 @@ public final class CalculationConstants {
   /** Percentages are stored with two decimal places. */
   public static final int PERCENTAGE_SCALE = 2;
 
+  /** Attribution contributions use three decimal places. */
+  public static final int ATTRIBUTION_SCALE = 3;
+
+  /** Minimum acceptable total portfolio weight (inclusive). */
+  public static final BigDecimal MIN_TOTAL_WEIGHT_PCT = new BigDecimal("99");
+
+  /** Maximum acceptable total portfolio weight (inclusive). */
+  public static final BigDecimal MAX_TOTAL_WEIGHT_PCT = new BigDecimal("101");
+
   /** Intermediate division uses higher precision to avoid rounding drift. */
   public static final int DIVISION_SCALE = 10;
 

@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.portfolio.performance.api.dto.DailyReturnResponse;
+import com.portfolio.performance.application.service.AttributionService;
 import com.portfolio.performance.application.service.DailyReturnService;
 import com.portfolio.performance.domain.CalculationStatus;
 import java.math.BigDecimal;
@@ -26,6 +27,8 @@ class PerformanceControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockBean private DailyReturnService dailyReturnService;
+
+  @MockBean private AttributionService attributionService;
 
   @Test
   void calculateDailyReturn_whenRequestIsValid_returnsOkWithResponseBody() throws Exception {

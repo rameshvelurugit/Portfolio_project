@@ -356,7 +356,7 @@ mvn clean verify
 | Module | Tests |
 |--------|-------|
 | `portfolio-common` | Header sanitization |
-| `portfolio-performance` | 33 tests — calculator, validator, service, controller, actuator, tracing |
+| `portfolio-performance` | 55 tests — daily return, attribution, calculator, validator, service, controller, actuator, tracing |
 | `portfolio-gateway` | Route config, actuator, logging utilities |
 
 ---
@@ -394,3 +394,125 @@ All settings are externalized in `application.yml` with profile overrides (`appl
 |------|---------|
 | [`prompt-log.md`](prompt-log.md) | Log of AI prompts used during development |
 | [`.cursor/skills/calculation-reviewer/SKILL.md`](.cursor/skills/calculation-reviewer/SKILL.md) | Checklist for reviewing calculation logic |
+| [`.cursor/skills/resiliency-reviewer/SKILL.md`](.cursor/skills/resiliency-reviewer/SKILL.md) | Checklist for reviewing attribution and resiliency logic |
+
+---
+
+## Attribution API (Assessment 2)
+
+### Endpoint
+
+```
+POST /api/performance/attribution
+Content-Type: application/json
+```
+
+The gateway route `Path=/api/performance/**` already covers this endpoint — no gateway changes required.
+
+### Sample request via Gateway
+
+```bash
+curl -s -X POST http://localhost:8080/api/performance/attribution \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requestId": "REQ-ATTR-001",
+    "portfolioId": "PF-1001",
+    "valuationDate": "2026-06-14",
+    "requestedBy": "advisor01",
+    "groups": [
+      { "groupName": "Equity", "weightPct": 60, "returnPct": 2.5 },
+      { "groupName": "Fixed Income", "weightPct": 30, "returnPct": 0.8 },
+      { "groupName": "Cash", "weightPct": 10, "returnPct": 0.1 }
+    ]
+  }'
+```
+
+### Request fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `requestId` | string | Yes | Idempotency key |
+| `portfolioId` | string | Yes | Portfolio identifier |
+| `valuationDate` | date | Yes | Date in `YYYY-MM-DD` format |
+| `groups` | array | Yes | At least one asset group |
+| `requestedBy` | string | Yes | Who submitted the request |
+
+**Group fields:** `groupName` (required), `weightPct` (required), `returnPct` (optional), `fallbackReturnPct` (optional).
+
+### Response fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `requestId` | string | Echoed from request |
+| `portfolioId` | string | Echoed from request |
+| `valuationDate` | date | Echoed from request |
+| `totalContributionPct` | number | Sum of group contributions (scale 3). `null` when `INVALID_INPUT` |
+| `status` | string | `VALID`, `DEGRADED`, `REVIEW_REQUIRED`, or `INVALID_INPUT` |
+| `degraded` | boolean | `true` only when status is `DEGRADED` |
+| `warnings` | array of strings | Fallback, missing-data, or validation messages |
+| `groups` | array | Per-group contributions (see below) |
+| `processedAt` | timestamp | UTC time when the response was created (ISO-8601) |
+
+**Group contribution fields:** `groupName`, `weightPct`, `effectiveReturnPct`, `contributionPct` (scale 3), `pricingMode` (`PRIMARY`, `FALLBACK_USED`, or `null`).
+
+### Business rules
+
+**Contribution formula:**
+
+```
+contributionPct = (weightPct × effectiveReturnPct) / 100
+totalContributionPct = sum of all group contributionPct values
+```
+
+Attribution percentages use **scale 3** with `HALF_UP` rounding. Daily-return continues to use scale 2.
+
+### Validation rules
+
+| Rule | Outcome |
+|------|---------|
+| Total weight not in [99%, 101%] | `INVALID_INPUT` |
+| `groups` null or empty | `INVALID_INPUT` |
+| Blank `groupName` | `INVALID_INPUT` |
+| Negative `weightPct` | `INVALID_INPUT` |
+
+When `INVALID_INPUT`: `totalContributionPct` is `null`, `groups` is empty, `degraded` is `false`.
+
+### Pricing modes
+
+| Mode | When |
+|------|------|
+| `PRIMARY` | `returnPct` is present |
+| `FALLBACK_USED` | `returnPct` absent, `fallbackReturnPct` present (adds a warning) |
+| `null` | Both returns absent (contribution = `0.000`) |
+
+### Status precedence
+
+Evaluated in this order:
+
+1. `INVALID_INPUT` — business validation failed
+2. `REVIEW_REQUIRED` — more than one group missing both returns
+3. `DEGRADED` — exactly one group missing both returns (`degraded = true`)
+4. `VALID` — all other successful cases (including fallback usage)
+
+### Degraded and review processing
+
+When return data is missing for a group:
+
+- `effectiveReturnPct = null`
+- `contributionPct = 0.000`
+- `pricingMode = null`
+- A warning names the missing group
+- The group remains in the response list
+
+### Idempotency
+
+- Every request requires a `requestId`
+- Duplicate `requestId` returns the cached response without recalculating
+- Same `requestId` with a different body returns the first cached response (first-write-wins) and logs a warning
+- Cache is **in-memory** (`ConcurrentHashMap`) and **lost on application restart**
+
+### Assumptions
+
+- No database is used for idempotency or attribution storage
+- Gateway requires no changes — existing route covers `/api/performance/**`
+- Daily-return endpoint and behaviour are unchanged

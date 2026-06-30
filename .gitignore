@@ -141,3 +141,5 @@ failsafe-reports/
 *.rej
 .attach_pid*
 .factorypath
+
+.cursor/skills/calculation-reviewer/SKILL.md
