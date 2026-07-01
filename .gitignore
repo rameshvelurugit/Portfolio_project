@@ -97,10 +97,7 @@ tmp/
 *.code-workspace
 
 # Cursor local/cache (keep .cursor/skills/ — project deliverables)
-.cursor/chat/
-.cursor/cache/
-.cursor/plans/
-.cursor/**/*.log
+.cursor/*
 
 # -----------------------------------------------------------------------------
 # IDE — NetBeans
