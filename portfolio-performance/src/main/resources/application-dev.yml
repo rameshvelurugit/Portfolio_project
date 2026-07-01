@@ -3,6 +3,10 @@ spring:
     activate:
       on-profile: dev
 
+portfolio:
+  idempotency:
+    store: ${IDEMPOTENCY_STORE:memory}
+
 management:
   endpoints:
     web:

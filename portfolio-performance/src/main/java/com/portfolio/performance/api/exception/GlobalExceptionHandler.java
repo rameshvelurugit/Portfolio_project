@@ -63,6 +63,18 @@ public class GlobalExceptionHandler {
         fieldErrors);
   }
 
+  @ExceptionHandler(
+      com.portfolio.performance.application.idempotency.IdempotencyCoordinationException.class)
+  public ResponseEntity<ApiErrorResponse> handleIdempotencyCoordination(
+      com.portfolio.performance.application.idempotency.IdempotencyCoordinationException exception) {
+
+    return buildErrorResponse(
+        HttpStatus.SERVICE_UNAVAILABLE,
+        "Idempotency coordination failed",
+        exception.getMessage(),
+        List.of());
+  }
+
   private ApiErrorResponse.FieldError toFieldError(FieldError fieldError) {
     return new ApiErrorResponse.FieldError(fieldError.getField(), fieldError.getDefaultMessage());
   }

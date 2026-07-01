@@ -1,4 +1,10 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+
   zipkin:
     image: openzipkin/zipkin:3.4
     ports:
@@ -12,10 +18,13 @@ services:
       SERVER_PORT: 8081
       SPRING_PROFILES_ACTIVE: dev
       ENVIRONMENT: docker
+      REDIS_HOST: redis
+      IDEMPOTENCY_STORE: redis
       ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
     ports:
       - "8081:8081"
     depends_on:
+      - redis
       - zipkin
 
   portfolio-performance-2:
@@ -26,10 +35,13 @@ services:
       SERVER_PORT: 8082
       SPRING_PROFILES_ACTIVE: dev
       ENVIRONMENT: docker
+      REDIS_HOST: redis
+      IDEMPOTENCY_STORE: redis
       ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
     ports:
       - "8082:8082"
     depends_on:
+      - redis
       - zipkin
 
   portfolio-performance-3:
@@ -40,10 +52,13 @@ services:
       SERVER_PORT: 8083
       SPRING_PROFILES_ACTIVE: dev
       ENVIRONMENT: docker
+      REDIS_HOST: redis
+      IDEMPOTENCY_STORE: redis
       ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
     ports:
       - "8083:8083"
     depends_on:
+      - redis
       - zipkin
 
   portfolio-gateway:

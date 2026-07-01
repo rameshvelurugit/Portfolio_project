@@ -4,11 +4,27 @@ server:
 spring:
   application:
     name: portfolio-performance
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
 
 portfolio:
   observability:
     service-name: ${spring.application.name}
     environment: ${ENVIRONMENT:local}
+  idempotency:
+    store: ${IDEMPOTENCY_STORE:redis}
+    ttl: ${IDEMPOTENCY_TTL:24h}
+    lock-ttl: ${IDEMPOTENCY_LOCK_TTL:30s}
+    wait-timeout: ${IDEMPOTENCY_WAIT_TIMEOUT:5s}
+    key-prefix: ${IDEMPOTENCY_KEY_PREFIX:portfolio:idempotency:attribution}
 
 management:
   endpoints:
@@ -44,6 +60,8 @@ management:
     livenessstate:
       enabled: true
     readinessstate:
+      enabled: true
+    redis:
       enabled: true
   info:
     env:

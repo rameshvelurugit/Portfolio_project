@@ -18,7 +18,6 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -54,11 +53,10 @@ public class AttributionService {
    * @return response including contributions, status, and any warnings
    */
   public AttributionResponse calculateAttribution(AttributionRequest request) {
-    Optional<AttributionResponse> cached = idempotencyStore.findCached(request);
-    if (cached.isPresent()) {
-      return cached.get();
-    }
+    return idempotencyStore.findOrCompute(request, () -> computeAttribution(request));
+  }
 
+  private AttributionResponse computeAttribution(AttributionRequest request) {
     log.info(
         "Processing attribution request requestId={} portfolioId={}",
         request.requestId(),
@@ -67,10 +65,7 @@ public class AttributionService {
     ValidationResult validationResult = validator.validate(request);
 
     if (!validationResult.isValid()) {
-      AttributionResponse response =
-          buildInvalidInputResponse(request, validationResult.reasons(), Instant.now(clock));
-      idempotencyStore.store(request, response);
-      return response;
+      return buildInvalidInputResponse(request, validationResult.reasons(), Instant.now(clock));
     }
 
     List<String> warnings = new ArrayList<>();
@@ -102,18 +97,14 @@ public class AttributionService {
         status,
         totalContributionPct);
 
-    AttributionResponse response =
-        buildResponse(
-            request,
-            totalContributionPct,
-            status,
-            degraded,
-            warnings,
-            contributions,
-            Instant.now(clock));
-
-    idempotencyStore.store(request, response);
-    return response;
+    return buildResponse(
+        request,
+        totalContributionPct,
+        status,
+        degraded,
+        warnings,
+        contributions,
+        Instant.now(clock));
   }
 
   private GroupContribution processGroup(GroupRequest group, List<String> warnings) {

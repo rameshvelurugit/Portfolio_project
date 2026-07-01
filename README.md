@@ -2,7 +2,7 @@
 
 A multi-module Spring Boot platform that calculates portfolio daily returns behind a production-grade API Gateway with load balancing, structured JSON logging, distributed tracing, and Spring Boot Actuator observability.
 
-**There is no database.** Each request is processed in memory and nothing is stored.
+**There is no relational database.** Calculation requests are processed statelessly; attribution idempotency is coordinated through **Redis** so multiple instances share the same cache.
 
 ---
 
@@ -15,6 +15,9 @@ flowchart LR
     LB --> S1[portfolio-performance :8081]
     LB --> S2[portfolio-performance :8082]
     LB --> S3[portfolio-performance :8083]
+    S1 --> Redis[(Redis :6379)]
+    S2 --> Redis
+    S3 --> Redis
     S1 --> Zipkin[(Zipkin :9411)]
     S2 --> Zipkin
     S3 --> Zipkin
@@ -506,13 +509,24 @@ When return data is missing for a group:
 
 ### Idempotency
 
-- Every request requires a `requestId`
+- Every attribution request requires a `requestId`
 - Duplicate `requestId` returns the cached response without recalculating
 - Same `requestId` with a different body returns the first cached response (first-write-wins) and logs a warning
-- Cache is **in-memory** (`ConcurrentHashMap`) and **lost on application restart**
+- Responses are stored in **Redis** with a configurable TTL (default **24 hours**) so all horizontally scaled instances share the same cache
+- In-flight duplicate requests are coordinated with a short-lived Redis lock to avoid double computation
+- Set `IDEMPOTENCY_STORE=memory` for single-instance local runs without Redis (not safe for multi-instance deployments)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `REDIS_HOST` | `localhost` | Redis hostname |
+| `REDIS_PORT` | `6379` | Redis port |
+| `IDEMPOTENCY_STORE` | `redis` | `redis` or `memory` |
+| `IDEMPOTENCY_TTL` | `24h` | How long completed responses are cached |
+| `IDEMPOTENCY_LOCK_TTL` | `30s` | In-flight processing lock duration |
 
 ### Assumptions
 
-- No database is used for idempotency or attribution storage
+- No relational database is used for attribution storage
+- Redis is required for correct idempotency when running multiple `portfolio-performance` instances
 - Gateway requires no changes — existing route covers `/api/performance/**`
 - Daily-return endpoint and behaviour are unchanged

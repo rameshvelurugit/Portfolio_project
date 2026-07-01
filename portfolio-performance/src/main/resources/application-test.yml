@@ -2,12 +2,20 @@ spring:
   config:
     activate:
       on-profile: test
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+portfolio:
+  idempotency:
+    store: memory
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   tracing:
     sampling:
       probability: 0.0

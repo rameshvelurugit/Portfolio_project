@@ -1,0 +1,18 @@
+spring:
+  config:
+    activate:
+      on-profile: it
+
+portfolio:
+  idempotency:
+    store: redis
+
+management:
+  tracing:
+    sampling:
+      probability: 0.0
+
+logging:
+  level:
+    root: WARN
+    com.portfolio: INFO

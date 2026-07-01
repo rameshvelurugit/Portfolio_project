@@ -8,8 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.portfolio.performance.api.dto.AttributionRequest;
 import com.portfolio.performance.api.dto.AttributionResponse;
 import com.portfolio.performance.api.dto.GroupRequest;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.portfolio.performance.application.calculation.AttributionCalculator;
 import com.portfolio.performance.application.idempotency.IdempotencyStore;
+import com.portfolio.performance.application.idempotency.InMemoryIdempotencyStore;
+import com.portfolio.performance.application.idempotency.RequestHasher;
 import com.portfolio.performance.application.validation.AttributionValidator;
 import com.portfolio.performance.domain.AttributionStatus;
 import com.portfolio.performance.domain.PricingMode;
@@ -31,11 +35,13 @@ class AttributionServiceTest {
   @BeforeEach
   void setUp() {
     Clock fixedClock = Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC);
+    ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+    IdempotencyStore idempotencyStore = new InMemoryIdempotencyStore(new RequestHasher(objectMapper));
     service =
         new AttributionService(
             new AttributionValidator(),
             new AttributionCalculator(),
-            new IdempotencyStore(),
+            idempotencyStore,
             fixedClock);
   }
 
