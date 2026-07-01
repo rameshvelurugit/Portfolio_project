@@ -6,7 +6,7 @@ import java.util.Map;
 import org.springframework.http.HttpHeaders;
 
 /**
- * Redacts sensitive HTTP headers before they are written to logs.
+ * Redacts sensitive HTTP headers before they are written to logs remove sensitive data in the logs.
  */
 public final class HeaderSanitizer {
 
